@@ -1,0 +1,354 @@
+---
+title: "Human Activity Recognition"
+author: "Barret Miller"
+output:
+  html_notebook: default
+  pdf_document: default
+---
+
+## Overview
+
+In this study, we will look at how accurately we can predict different ways in which subjects lifted dumbells. This study is based off a dataset built by experimentors who hooked sensors up to subjects, and measured 5 different ways in which those subjects performed a dumbell lift exercise. These sensors measured many different aspects of the continuous exercise, and these measurements are used as predictors in statistical models below. Of the 5 ways, 1 way was considered "correct", and the other 4 were different variants of the subject performing the exercise incorrectly. We will use classification algorithms to train a model, predict the classes, and measure our results. 
+
+## High Level Process
+
+1. Discuss background and details of the problem, and assumptions made
+1. Load data and explore
+    + Remove summarization/aggregate columns
+    + Split data into training, testing, and validation sets
+    + Create a feature plot of the training data
+1. Preprocess the training data by centering, scaling, and imputing
+1. Build several individual models and compare accuracy or the best model using a confusion matrix
+    + Build a Linear Discriminant Analysis (lda) model
+    + Build a Support Vector Machine (svm) model
+    + Build a Gradient Boosted model (gbm)
+    + Build a Random Forest (rf) model
+    + Compare Models
+    + Predicted vs. Truth for best model (training)
+    + Predicted vs. Truth for best model (testing)
+    + Correlation amoung model predictions
+1. Stacked/ensemble with previously built models
+    + Preprocess testing data, using parameters and process built from the training data
+    + Predict with each model using the testing set
+    + Feed predictions in as features to a higher order model
+1. Diagnostics
+    + Predicted vs.truth (testing)
+    + Predicted vs.truth (validation)
+
+## Background of the Problem and Assumptions
+The data is not time series, despite having a timestamp and windows, so we don't need to create time slices. My reasoning for this is that if an action is wrong (belongs to class B-E), it is wrong a given point in time along the continuous motion curve, so the characteristics of each point in time should speak for themselves. We are not trying to predict the correctness of the exercise for points in time ahead of a chunk of time. Each point in time belongs to a class. While some classes of exercises may start out with the same characteristics as another class (right or wrong), or may otherwise share similar characteristics at any arbitrary point along the continuous motion spectrum with another class, other points in time along the motion curve will have different measurable characteristics than any other class. If I think about both a right and a wrong motion starting out in the correct prediction, even though later in the motion, the wrong class will be identifiably, measurably wrong, at the starting point at least, it is indistinguishable from the correct motion (and therefore correct itself, even though it belongs to a "wrong" class). Therefore, even though in the experiment, the subjects are doing a right or wrong motion, corresponding to multiple records in the dataset across time, in reality, each point in time (record in the dataset) is independently right or wrong.
+
+Reading the white paper for the dataset, and looking at the dataset, you can see that the experimentors originally included summarization records at the end of each window, corresponding to the records for which the new_window indicator variable is "yes". Because we will be predicting on raw observations, not summarized observations, I am removing the summarized observations, as well as all the summarization columns/features/fields that are only populated for the summarization records. It's bad practice to mix the grain of your datasets, anyway and to create a situation where someone not familiar with what is going on could double count those summarized records in summary statistics (like sum, average, etc.)
+
+## Load Data and Set up Train, Test, and Validation Sets
+
+Here, we load data, and select only the fields we want to use for prediction.
+
+```{r loadData, echo=FALSE, results='hide'}
+library(readr)
+
+harRawSet <- read_csv("~/github/local/PracticalMachineLearning/pml-training.csv", 
+    col_types = cols(
+        user_name = col_factor(c("adelmo", "carlitos", "charles", "eurico", "jeremy", "pedro")),
+        cvtd_timestamp = col_datetime(format = "%d/%m/%Y %H:%M"), 
+        kurtosis_roll_belt = col_double(),
+        kurtosis_picth_arm = col_double(), 
+        kurtosis_picth_belt = col_double(), 
+        kurtosis_yaw_arm = col_double(), 
+        kurtosis_yaw_belt = col_double(), 
+        kurtosis_yaw_dumbbell = col_double(), 
+        skewness_pitch_arm = col_double(), 
+        skewness_roll_belt = col_double(),
+        skewness_roll_belt.1 = col_double(), 
+        skewness_yaw_arm = col_double(), 
+        skewness_yaw_belt = col_double(), 
+        skewness_yaw_forearm = col_double(),
+        max_yaw_belt = col_double(),
+        min_yaw_belt = col_double(),
+        amplitude_yaw_belt = col_double(),
+        kurtosis_roll_forearm = col_double(),
+        kurtosis_picth_forearm = col_double(),
+        kurtosis_yaw_forearm = col_double(),
+        skewness_roll_forearm = col_double(),
+        skewness_pitch_forearm = col_double(),
+        max_yaw_forearm = col_double(),
+        min_yaw_forearm = col_double(),
+        amplitude_yaw_forearm = col_double(),
+        skewness_yaw_dumbbell = col_double(),
+        classe = col_factor(c("A","B","C","D","E"))
+        )
+    )
+
+rawFinalTestSet <- read_csv("~/github/local/PracticalMachineLearning/pml-testing.csv", 
+    col_types = cols(
+        user_name = col_factor(c("adelmo", "carlitos", "charles", "eurico", "jeremy", "pedro")),
+        cvtd_timestamp = col_datetime(format = "%d/%m/%Y %H:%M"), 
+        kurtosis_roll_belt = col_double(),
+        kurtosis_picth_arm = col_double(), 
+        kurtosis_picth_belt = col_double(), 
+        kurtosis_yaw_arm = col_double(), 
+        kurtosis_yaw_belt = col_double(), 
+        kurtosis_yaw_dumbbell = col_double(), 
+        skewness_pitch_arm = col_double(), 
+        skewness_roll_belt = col_double(),
+        skewness_roll_belt.1 = col_double(), 
+        skewness_yaw_arm = col_double(), 
+        skewness_yaw_belt = col_double(), 
+        skewness_yaw_forearm = col_double(),
+        max_yaw_belt = col_double(),
+        min_yaw_belt = col_double(),
+        amplitude_yaw_belt = col_double(),
+        kurtosis_roll_forearm = col_double(),
+        kurtosis_picth_forearm = col_double(),
+        kurtosis_yaw_forearm = col_double(),
+        skewness_roll_forearm = col_double(),
+        skewness_pitch_forearm = col_double(),
+        max_yaw_forearm = col_double(),
+        min_yaw_forearm = col_double(),
+        amplitude_yaw_forearm = col_double(),
+        skewness_yaw_dumbbell = col_double()
+        )
+    )
+   
+    library(dplyr)
+    harModelSet <- harRawSet %>%
+       dplyr::select(user_name, roll_belt, pitch_belt, yaw_belt, total_accel_belt,           
+             gyros_belt_x, gyros_belt_y, gyros_belt_z , 
+             accel_belt_x, accel_belt_y, accel_belt_z,
+             magnet_belt_x, magnet_belt_y, magnet_belt_z,           
+             roll_arm, pitch_arm, yaw_arm, total_accel_arm,   
+             gyros_arm_x, gyros_arm_y, gyros_arm_z, 
+             accel_arm_x, accel_arm_y, accel_arm_z,             
+             magnet_arm_x, magnet_arm_y, magnet_arm_z,
+             roll_dumbbell, pitch_dumbbell, yaw_dumbbell,
+             gyros_dumbbell_x, gyros_dumbbell_y, gyros_dumbbell_z,  
+             accel_dumbbell_x, accel_dumbbell_y, accel_dumbbell_z,
+             magnet_dumbbell_x, magnet_dumbbell_y, magnet_dumbbell_z,
+             roll_forearm, pitch_forearm, yaw_forearm,      
+             gyros_forearm_x, gyros_forearm_y, gyros_forearm_z,
+             accel_forearm_x, accel_forearm_y, accel_forearm_z,
+             magnet_forearm_x, magnet_forearm_y, magnet_forearm_z,
+             classe)
+    
+   predictFinalTestSet <- rawFinalTestSet %>%
+       dplyr::select(user_name, roll_belt, pitch_belt, yaw_belt, total_accel_belt,           
+             gyros_belt_x, gyros_belt_y, gyros_belt_z , 
+             accel_belt_x, accel_belt_y, accel_belt_z,
+             magnet_belt_x, magnet_belt_y, magnet_belt_z,           
+             roll_arm, pitch_arm, yaw_arm, total_accel_arm,   
+             gyros_arm_x, gyros_arm_y, gyros_arm_z, 
+             accel_arm_x, accel_arm_y, accel_arm_z,             
+             magnet_arm_x, magnet_arm_y, magnet_arm_z,
+             roll_dumbbell, pitch_dumbbell, yaw_dumbbell,
+             gyros_dumbbell_x, gyros_dumbbell_y, gyros_dumbbell_z,  
+             accel_dumbbell_x, accel_dumbbell_y, accel_dumbbell_z,
+             magnet_dumbbell_x, magnet_dumbbell_y, magnet_dumbbell_z,
+             roll_forearm, pitch_forearm, yaw_forearm,      
+             gyros_forearm_x, gyros_forearm_y, gyros_forearm_z,
+             accel_forearm_x, accel_forearm_y, accel_forearm_z,
+             magnet_forearm_x, magnet_forearm_y, magnet_forearm_z)
+```
+
+After removing summarized/aggregated columns, the variables we will use to build our model consist of only the 51 base metrics from the original dataset.
+
+```{r echo=FALSE}
+cat(names(harModelSet), sep="\n")
+```
+
+### Split into Train, Test, and Validation
+
+Training will contain 60% of the observations, testing will contain 20%, and validation will be 20%. The table below shows these splits terms of row counts.
+
+```{r displaySetSizes, echo=FALSE}
+library(caret)
+set.seed(2600)
+inBuild <- createDataPartition(y=harModelSet$classe, p=0.80, list=F)
+validation <- harModelSet[-inBuild,]; buildData <- harModelSet[inBuild,]
+
+inTrain <- createDataPartition(y=buildData$classe, p=0.75, list=F)
+training <- buildData[inTrain,]; testing <- buildData[-inTrain,]
+
+library(knitr)
+m <- rbind(c("training", dim(training)[1]),
+      c("testing", dim(testing)[1]),
+      c("validation", dim(validation)[1]))
+colnames(m) <- c("Dataset", "# Rows")
+rownames(m) <- c("", "", "")
+kable(m)
+```
+
+### Feature Plot
+
+Here is a feature plot of the training set showing correlation of some of the individual predictors vs one another and vs the outcome (top row). While some correlation can be seen with the pitch_forearm variable vs the outcome, there is a lot of overlap and no clear predictor stands out among all the other variables. I ran many iterations of the below plot on different variables, but nothing stood out, such that the below is representative of the other variable as well. It doesn't seem like any one variable has a single strong correlation with the outcome. Hopefully, combinations and interactions of the variables will provide good predictions, but those interactions cannot be represented well visually. This may suggest the problem cannot be modeled well linearly.
+
+```{r featurePlot, echo=FALSE, fig.width=8.5, fig.height=11}
+featurePlot(x=training[,c("roll_forearm", "pitch_forearm", "yaw_forearm", 
+                          "gyros_dumbbell_x", "gyros_dumbbell_y", 
+                          "gyros_dumbbell_z", "classe")], 
+            y = training$classe, plot="pairs",
+            pch=16,
+            lwd=2,
+            col=rgb(.2,.2,.2,.4),
+            trans=.1)
+```
+
+## Preprocess
+
+We preprocess the training set by centering, scaling, and imputing missing values.
+
+```{r tidy=TRUE}
+preObj <- preProcess(training[,-52], method=c("center", "scale", "knnImpute"))
+trainingImputed <- predict(preObj, training)
+```
+
+## Model Building
+
+Now, I build lda, svm, gbm, and rf models. I am using 5-fold cross validation, and model selection is based on the accuracy metric. These models are built on the scaled, centered, and imputed training data from above. 
+
+Set up multithreading and the control for all models:
+```{r results='hide', tidy=TRUE, cache=TRUE}
+# configure multicore
+library(doMC)
+registerDoMC(cores=4)
+
+seed = 2600
+control = trainControl(method="cv",number=5)
+metric = "Accuracy"
+```
+
+Build an lda model:
+
+```{r tidy=TRUE, cache=TRUE}
+set.seed(seed)
+mod.lda <- train(classe ~., data=trainingImputed,
+                 method="lda",
+                 metric=metric,
+                 trControl=control)
+```
+
+Build an svm model:
+
+```{r tidy=TRUE, cache=TRUE}
+set.seed(seed)
+mod.svm <- train(classe ~., data=trainingImputed,
+                 method="svmRadial",
+                 metric=metric,
+                 trControl=control,
+                 prob.model=T)
+```
+
+Build a gbm model:
+
+```{r tidy=TRUE, cache=TRUE}
+set.seed(seed)
+mod.gbm <- train(classe ~., data=trainingImputed,
+                   method="gbm",
+                   metric=metric,
+                   trControl=control)
+```
+
+Build an rf model:
+
+```{r tidy=TRUE, cache=TRUE}
+set.seed(seed)
+mod.rf <- train(classe ~., data=trainingImputed,
+                   method="rf",
+                   metric=metric,
+                   trControl=control)
+```
+
+## Compare Models
+
+Looking at the mean accuracy of each model based on the training cross validation, it appears that the rf is most accurate, followed closely by the gbm. The svm was in third place, and the lda was a distant fourth.
+
+```{r echo=FALSE, cache=TRUE}
+results <- resamples(list(lda=mod.lda, svm=mod.svm, gbm=mod.gbm, rf=mod.rf))
+summary(results)
+```
+
+### Confusion Matrix for Predicted vs. Truth on Training Data
+
+If we look at the confusion matrix for the most accurate of the 4, the random forest model, for predictions on the training data, you see a perfect 100% accuracy.
+
+```{r echo=FALSE, cache=TRUE}
+confusionMatrix(predict(mod.rf), trainingImputed$classe)
+```
+
+### Confusion Matrix for Predicted vs. Truth on Testing Data
+
+Predicting using the random forest model against the test set produces an extremely impressive 99.46% accuracy on data that was not used to train this model. Note that to predict using the test set, I first have to preprocess the test data using the same parameters found when preprocessing the training data. This preprocessed testing set will be used in the model ensemble step later as well. 
+
+```{r echo=FALSE, cache=TRUE}
+testingImputed <- predict(preObj, testing)
+confusionMatrix(predict(mod.rf, newdata=testingImputed), testingImputed$classe)
+```
+
+### Model Correlation
+
+Taking a look at the model correlations between the 4 built so far, it looks like lda is most heavily correlated with the rf and gbm, although not with the svm. Besides the lda, however, no other model pair is in the highly correlated range (>75%).
+
+```{r echo=FALSE, cache=TRUE}
+modelCor(results)
+```
+
+## Ensemble/Stacked Model
+
+Now, I will build an ensemble model using the probability predictions of each class from all four models as features for a higher order model. I will train this higher order model on the testing set. I make sure to preprocess the testing data using the preprocessing object built on the training data. The preprocessing was to center, scale, and impute.
+
+```{r echo=FALSE, tidy=TRUE, cache=TRUE}
+
+pred.lda <- predict(mod.lda, testingImputed, type="prob")
+pred.svm <- predict(mod.svm, testingImputed, type="prob")
+pred.gbm <- predict(mod.gbm, testingImputed, type="prob")
+pred.rf <- predict(mod.rf, testingImputed, type="prob")
+
+predDF <- data.frame(pred.lda,pred.svm,pred.gbm,pred.rf,classe=testingImputed$classe)
+
+set.seed(seed)
+mod.comb.rf <- train(classe~.,data=predDF,
+                  method="rf",
+                  trControl=control,
+                  metric=metric)
+```
+
+### Compare Predictions with Testing Set
+
+Now I will compare the results of all models. Building the rf model was very quick. The accuracy of the rf ensemble model is an extremely impressive 99.32%. Looking at the confusion matrix on the testing data used to train this model, again, we get 100% accuracy. 
+
+```{r echo=FALSE, cache=TRUE}
+results <- resamples(list(lda=mod.lda, svm=mod.svm, gbm=mod.gbm, rf=mod.rf, comb.rf=mod.comb.rf))
+summary(results)
+confusionMatrix(predict(mod.comb.rf), testingImputed$classe)
+```
+
+### Compare Predictions with Validation Set
+
+Finally, lets predict using our ensemble model against the validation set, and use that metric as the final measure of our prediction accuracy. Again, we preprocess the validation set using the imputation, centering, and scaling based on the original training data. Then we have to run the preprocessed validation set through each of the individual models to get their predictions. Last, we can run those predictions through the ensemble model, and compare the predicted classes to actuals in the validation set. 
+
+As you can see, the accuracy of our ensemble model against the validation set is 99.57%, misclassifying only 18 out of 3923 activities. 
+
+```{r echo=FALSE, cache=TRUE}
+validationImputed <- predict(preObj, validation)
+
+pred.lda.v <- predict(mod.lda, validationImputed, type="prob")
+pred.svm.v <- predict(mod.svm, validationImputed, type="prob")
+pred.gbm.v <- predict(mod.gbm, validationImputed, type="prob")
+pred.rf.v <- predict(mod.rf, validationImputed, type="prob")
+predDF.v <- data.frame(pred.lda.v,pred.svm.v,pred.gbm.v,pred.rf.v,classe=validationImputed$classe)
+
+confusionMatrix(predict(mod.comb.rf, newdata=predDF.v), validationImputed$classe)
+```
+
+```{r echo=FALSE, cache=TRUE, results='hide'}
+
+finalTestImputed <- predict(preObj, predictFinalTestSet)
+
+pred.lda.q <- predict(mod.lda, finalTestImputed, type="prob")
+pred.svm.q <- predict(mod.svm, finalTestImputed, type="prob")
+pred.gbm.q <- predict(mod.gbm, finalTestImputed, type="prob")
+pred.rf.q <- predict(mod.rf, finalTestImputed, type="prob")
+predDF.q <- data.frame(pred.lda.q,pred.svm.q,pred.gbm.q,pred.rf.q)
+
+print(predict(mod.comb.rf, newdata=predDF.q))
+
+```
